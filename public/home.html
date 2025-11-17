@@ -16,7 +16,7 @@
         <h1>Resort Booking</h1>
       </div>
       <nav class="navbar-menu">
-        <a href="">Khuyến mãi</a>
+        <a href="promotions.html">Khuyến mãi</a>
         <a href="supports/support.html">Hỗ trợ</a>
         <a href="">Hợp tác</a>
         <a href="my_bookings.html">Đặt chỗ</a>
@@ -29,7 +29,6 @@
 
         <!-- Phần hiển thị khi đã đăng nhập -->
         <div id="user-section">
-          <!-- Icon + Username = clickable link to profile -->
           <a href="profile.html" class="user-profile-link" id="profile-link">
             <i class="fas fa-user-circle user-icon"></i>
             <span id="username-display"></span>
@@ -127,6 +126,9 @@
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/vn.js"></script>
   <script>
+    // ===== PLACEHOLDER DATA URL =====
+    const PLACEHOLDER_DATA_URL = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%23e0e0e0%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22 font-size=%2216%22 font-family=%22Arial%22%3ENo Image Available%3C/text%3E%3C/svg%3E';
+
     // ===== AUTH MANAGEMENT (NEW) =====
     function updateNavbar() {
       const token = localStorage.getItem('token');
@@ -157,7 +159,6 @@
 
     // ===== ORIGINAL CODE (KEPT INTACT) =====
     document.addEventListener('DOMContentLoaded', async () => {
-      // Update navbar khi trang load
       updateNavbar();
 
       const logoutBtn = document.getElementById('logout-btn');
@@ -175,8 +176,16 @@
 
       // ===== HELPER FUNCTIONS =====
       function resolveImageUrl(url) {
-        if (!url) return 'https://via.placeholder.com/300x200?text=Room';
+        // ✅ FIX: Sử dụng Data URL thay vì file local
+        if (!url) return PLACEHOLDER_DATA_URL;
+        
+        // Nếu là URL đầy đủ
         if (/^https?:\/\//i.test(url)) return url;
+        
+        // Nếu là đường dẫn tương đối
+        if (url.startsWith('/')) return API_BASE + url;
+        
+        // Nếu là tên file, thêm /uploads/
         return API_BASE + '/uploads/' + url;
       }
 
@@ -276,7 +285,7 @@
 
           card.innerHTML = `
             <div class="destination-card-image">
-              <img src="${imgUrls[loc] || 'https://via.placeholder.com/300x150'}" alt="${locationMap[loc] || loc}">
+              <img src="${imgUrls[loc] || PLACEHOLDER_DATA_URL}" alt="${locationMap[loc] || loc}">
             </div>
             <div class="destination-card-name">${locationMap[loc] || loc}</div>
           `;
@@ -320,13 +329,34 @@
             const card = document.createElement('div');
             card.className = 'room-card';
             card.style.cursor = 'pointer';
-            card.onclick = () => window.location.href = `resort_detail.html?id=${room.id}`;
+            card.onclick = () => {
+            const encodedData = encodeURIComponent(JSON.stringify(room));
+            window.location.href = `resort_detail.html?id=${room.id}&data=${encodedData}`;
+            };
 
-            const imageUrl = resolveImageUrl(room.images?.[0]);
+            // ✅ FIX: Xử lý images đúng cách
+            let images = room.images || [];
+            
+            // Convert string thành mảy nếu cần
+            if (typeof images === 'string') {
+              try {
+                const parsed = JSON.parse(images);
+                images = Array.isArray(parsed) ? parsed : [];
+              } catch (e) {
+                images = images.trim() ? images.split(',').map(img => img.trim()) : [];
+              }
+            } else if (!Array.isArray(images)) {
+              images = [];
+            }
+            
+            // Lọc bỏ các ảnh rỗng
+            images = images.filter(img => img && typeof img === 'string' && img.trim() !== '');
+            
+            const imageUrl = images.length > 0 ? resolveImageUrl(images[0]) : PLACEHOLDER_DATA_URL;
 
             card.innerHTML = `
               <div class="room-card-image">
-                <img src="${imageUrl}" alt="${room.room_type}" onerror="this.src='https://via.placeholder.com/300x200?text=Room'">
+                <img src="${imageUrl}" alt="${room.room_type}" onerror="this.src='${PLACEHOLDER_DATA_URL}'">
               </div>
               <div class="room-card-content">
                 <h3>${room.room_type}</h3>

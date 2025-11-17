@@ -26,6 +26,7 @@ pool.query("SELECT NOW()", (err, result) => {
 });
 
 const app = express();
+app.use('/uploads', express.static('uploads'));
 app.use(cors({
   origin: "http://localhost:5500",
   credentials: true,
@@ -291,30 +292,69 @@ app.post("/api/admin/resorts", authorize(['admin', 'staff']), async (req, res) =
 // ===== API QUẢN LÝ PHÒNG =====
 app.get("/api/rooms", async (req, res) => {
   try {
-    const { location, room_type } = req.query;
-    let sql = `SELECT r.id, res.name AS resort_name, r.room_type_id, rt.name AS room_type, 
-                      rd.price_per_night,
-                      rt.capacity, rd.images_url AS images, r.location, rd.description, rd.features, rd.num_bed
-               FROM rooms r 
-               JOIN room_types rt ON r.room_type_id = rt.id
-               JOIN resorts res ON r.resort_id = res.id
-               LEFT JOIN room_details rd ON rd.room_id = r.id 
-               WHERE 1=1`;
-    const params = [];
-    if (location) {
-      params.push(`%${location}%`);
-      sql += ` AND LOWER(r.location) LIKE LOWER($${params.length})`;
-    }
-    if (room_type) {
-      params.push(room_type);
-      sql += ` AND rt.name = $${params.length}`;
-    }
-    sql += " ORDER BY r.created_at DESC";
-    const roomsResult = await pool.query(sql, params);
-    res.json(roomsResult.rows);
+    const { rows } = await pool.query(
+      `SELECT r.id, res.name AS resort_name, r.location, r.category, r.address,
+               rt.name AS room_type, rt.capacity,
+               rd.description,
+               rd.features,
+               COALESCE(rd.images_url, '[]'::text) AS images_url,
+               rd.price_per_night,
+               rd.num_bed
+       FROM rooms r 
+       JOIN room_types rt ON r.room_type_id = rt.id
+       JOIN resorts res ON r.resort_id = res.id
+       LEFT JOIN room_details rd ON rd.room_id = r.id`
+    );
+    
+    // ✅ Convert images - FIX CHO COMMA-SEPARATED
+    const processedRooms = rows.map(room => {
+      let images = [];
+      
+      if (room.images_url) {
+        try {
+          const parsed = JSON.parse(room.images_url);
+          
+          if (Array.isArray(parsed)) {
+            images = parsed.map(item => {
+              if (typeof item === 'string') {
+                let cleaned = item.replace(/[{}]/g, '').replace(/"/g, '');
+                if (cleaned.includes(',')) {
+                  return cleaned.split(',').map(img => img.trim());
+                }
+                return cleaned;
+              }
+              return item;
+            }).flat().filter(img => img && img.trim() !== '');
+          } else if (typeof parsed === 'string') {
+            let cleaned = parsed.replace(/[{}]/g, '').replace(/"/g, '');
+            if (cleaned.includes(',')) {
+              images = cleaned.split(',').map(img => img.trim()).filter(img => img);
+            } else {
+              images = [cleaned];
+            }
+          }
+        } catch (e) {
+          // Không phải JSON
+          if (typeof room.images_url === 'string' && room.images_url.trim()) {
+            let cleaned = room.images_url.replace(/[{}]/g, '').replace(/"/g, '');
+            if (cleaned.includes(',')) {
+              images = cleaned.split(',').map(img => img.trim()).filter(img => img);
+            } else {
+              images = [cleaned];
+            }
+          }
+        }
+      }
+      
+      room.images = images;
+      delete room.images_url;
+      return room;
+    });
+    
+    res.json(processedRooms);
   } catch (error) {
-    console.error("❌ Lỗi:", error);
-    res.status(500).json({ error: "Lỗi server" });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Lỗi server' });
   }
 });
 
@@ -339,12 +379,11 @@ app.get("/api/rooms/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await pool.query(
-      // ...
       `SELECT r.id, res.name AS resort_name, r.location, r.category, r.address,
                rt.name AS room_type, rt.capacity, 
                COALESCE(rd.description, 'Chưa có mô tả') AS description,
-               COALESCE(rd.features, ARRAY['Không có thông tin']) AS features,
-               COALESCE(rd.images_url, ARRAY[]::text[]) AS images,
+               COALESCE(rd.features, '{}'::text[]) AS features,
+               COALESCE(rd.images_url, '[]'::text) AS images_url,
                rd.price_per_night,
                rd.num_bed
        FROM rooms r 
@@ -354,15 +393,62 @@ app.get("/api/rooms/:id", async (req, res) => {
        WHERE r.id = $1 LIMIT 1`,
       [id]
     );
+    
     if (rows.length === 0) {
       return res.status(404).json({ error: "Không tìm thấy phòng" });
     }
-    res.json(rows[0]);
+    
+    // ✅ Convert images - FIX CHO COMMA-SEPARATED
+    const room = rows;
+    let images = [];
+    
+    if (room.images_url) {
+      try {
+        const parsed = JSON.parse(room.images_url);
+        
+        if (Array.isArray(parsed)) {
+          images = parsed.map(item => {
+            if (typeof item === 'string') {
+              let cleaned = item.replace(/[{}]/g, '').replace(/"/g, '');
+              if (cleaned.includes(',')) {
+                return cleaned.split(',').map(img => img.trim());
+              }
+              return cleaned;
+            }
+            return item;
+          }).flat().filter(img => img && img.trim() !== '');
+        } else if (typeof parsed === 'string') {
+          let cleaned = parsed.replace(/[{}]/g, '').replace(/"/g, '');
+          if (cleaned.includes(',')) {
+            images = cleaned.split(',').map(img => img.trim()).filter(img => img);
+          } else {
+            images = [cleaned];
+          }
+        }
+      } catch (e) {
+        if (typeof room.images_url === 'string' && room.images_url.trim()) {
+          let cleaned = room.images_url.replace(/[{}]/g, '').replace(/"/g, '');
+          if (cleaned.includes(',')) {
+            images = cleaned.split(',').map(img => img.trim()).filter(img => img);
+          } else {
+            images = [cleaned];
+          }
+        }
+      }
+    }
+    
+    room.images = images;
+    delete room.images_url;
+    
+    res.json(room);
   } catch (error) {
-    console.error("❌ Lỗi khi lấy chi tiết phòng:", error);
+    console.error("❌ Lỗi:", error);
     res.status(500).json({ error: "Lỗi server" });
   }
 });
+
+
+
 
 app.post("/api/reviews", async (req, res) => {
   try {
